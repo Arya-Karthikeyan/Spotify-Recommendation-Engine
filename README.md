@@ -1,5 +1,8 @@
 # Spotify Recommendation Engine
 
+**Live demo: https://crate-digger-tzau.onrender.com**
+(it's on Render's free plan so if nobody has used it in a while the first load takes about a minute)
+
 A music recommender I built that suggests songs based on ones you already like. It
 uses two things:
 
