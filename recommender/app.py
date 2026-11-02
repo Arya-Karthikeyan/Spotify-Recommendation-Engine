@@ -1,6 +1,7 @@
 # Web app. Run with:  uvicorn recommender.app:app
 import os
 import secrets
+from collections import Counter
 from pathlib import Path
 
 import spotipy
@@ -15,8 +16,15 @@ from .engine import Recommender
 app = FastAPI()
 rec = None
 
-# this has to match a redirect uri added in the spotify developer dashboard
-REDIRECT_URI = os.environ.get("WEB_REDIRECT_URI", "http://127.0.0.1:8000/callback")
+# this has to match a redirect uri added in the spotify developer dashboard.
+# render sets RENDER_EXTERNAL_URL to the site's address (https://xxx.onrender.com)
+# so when it's deployed it uses that, and locally it uses 127.0.0.1
+if os.environ.get("WEB_REDIRECT_URI"):
+    REDIRECT_URI = os.environ["WEB_REDIRECT_URI"]
+elif os.environ.get("RENDER_EXTERNAL_URL"):
+    REDIRECT_URI = os.environ["RENDER_EXTERNAL_URL"].rstrip("/") + "/callback"
+else:
+    REDIRECT_URI = "http://127.0.0.1:8000/callback"
 
 # logged in users, keyed by a random id stored in a cookie. it's just kept in memory
 # so everyone has to log in again if the server restarts, which is fine for this
@@ -44,6 +52,37 @@ def song_json(tid):
         "danceability": float(row["danceability"]),
         "valence": float(row["valence"]),
         "acousticness": float(row["acousticness"]),
+        "popularity": int(row["track_popularity"]),
+    }
+
+
+def taste(ids):
+    """Average features for a list of songs, all scaled 0-1 so they fit on one chart."""
+    songs = get_model().songs.loc[ids]
+    values = {
+        "energy": songs["energy"].mean(),
+        "danceability": songs["danceability"].mean(),
+        "valence": songs["valence"].mean(),
+        "acousticness": songs["acousticness"].mean(),
+        # tempo is in BPM, squash 60-180 BPM into 0-1
+        "tempo": min(max((songs["tempo"].mean() - 60) / 120, 0), 1),
+        "popularity": songs["track_popularity"].mean() / 100,
+    }
+    values = {k: round(float(v), 3) for k, v in values.items()}
+    values["bpm"] = round(float(songs["tempo"].mean()))
+    return values
+
+
+def taste_summary(seed_ids):
+    songs = get_model().songs.loc[seed_ids]
+    genres = Counter(g for gs in songs["genres"] for g in gs)
+    decades = Counter(y // 10 * 10 for y in songs["year"])
+    decade, count = decades.most_common(1)[0]
+    return {
+        "genres": [g for g, _ in genres.most_common(3)],
+        "decade": f"{decade}s",
+        "decade_share": round(count / len(songs), 2),
+        "years": [int(songs["year"].min()), int(songs["year"].max())],
     }
 
 
@@ -56,6 +95,7 @@ class RecRequest(BaseModel):
     collab: float = 0.4
     new_artists: bool = False
     genres: list[str] = []
+    mood: dict[str, float] = {}
 
 
 @app.get("/")
@@ -73,8 +113,8 @@ def search(q: str):
 @app.post("/api/recommend")
 def recommend(req: RecRequest):
     model = get_model()
-    if not req.seeds:
-        raise HTTPException(400, "need at least one seed")
+    if not req.seeds or len(req.seeds) > 50:
+        raise HTTPException(400, "need between 1 and 50 seed songs")
     for tid in req.seeds + req.dislikes:
         if tid not in model.row_of:
             raise HTTPException(400, f"unknown track id {tid}")
@@ -87,6 +127,7 @@ def recommend(req: RecRequest):
         collab=req.collab,
         new_artists_only=req.new_artists,
         genres=req.genres or None,
+        mood={f: max(-1, min(1, v)) for f, v in req.mood.items()},
     )
     out = []
     for r in results:
@@ -94,7 +135,15 @@ def recommend(req: RecRequest):
         song["match"] = round(r.sound_match, 2)
         song["reasons"] = r.reasons
         out.append(song)
-    return out
+
+    result = {"songs": out, "taste": None}
+    if out:
+        result["taste"] = {
+            "seeds": taste(req.seeds),
+            "recs": taste([s["id"] for s in out]),
+            **taste_summary(req.seeds),
+        }
+    return result
 
 
 # ---- spotify login ----
@@ -124,7 +173,8 @@ def login():
     sessions[session_id] = {"cache": MemoryCacheHandler(), "state": state, "name": None}
     url = spotify_api.make_auth(REDIRECT_URI, sessions[session_id]["cache"]).get_authorize_url(state=state)
     response = RedirectResponse(url)
-    response.set_cookie("session", session_id, httponly=True, samesite="lax")
+    secure = REDIRECT_URI.startswith("https")  # only send the cookie over https when deployed
+    response.set_cookie("session", session_id, httponly=True, samesite="lax", secure=secure)
     return response
 
 

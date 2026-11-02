@@ -24,6 +24,10 @@ FEATURE_WEIGHTS = {
 
 # features worth mentioning in the "why" text. instrumentalness and liveness are ~0
 # for almost every song so saying "similar instrumentalness" means nothing
+# features the mood sliders can push up or down
+MOOD_FEATURES = ["energy", "valence", "danceability", "acousticness", "tempo"]
+MOOD_STRENGTH = 0.45  # tried 0.3 (too subtle) and 0.6 (drifts away from your songs too much)
+
 EXPLAIN_FEATURES = ["danceability", "energy", "valence", "acousticness", "tempo", "speechiness", "loudness"]
 
 
@@ -109,13 +113,14 @@ class Recommender:
     # ---- recommending ----
 
     def recommend(self, seeds, n=20, dislikes=None, seed_weights=None, diversity=0.3, popularity=0.1,
-                  collab=0.4, max_per_artist=2, new_artists_only=False, genres=None, exclude=None):
+                  collab=0.4, max_per_artist=2, new_artists_only=False, genres=None, exclude=None, mood=None):
         """
         seeds          list of track ids you like
         dislikes       track ids to move away from
         diversity      0 = just the closest songs, 1 = spread out as much as possible
         popularity     how much to boost popular songs
         collab         0 = only sound similarity, 1 = only playlist co-occurrence
+        mood           e.g. {"energy": 1, "acousticness": -0.5}, each from -1 to 1
         """
         if not seeds:
             raise ValueError("need at least one seed song")
@@ -137,6 +142,8 @@ class Recommender:
         if self.playlists is not None and collab > 0:
             song_cf, artist_cf = self.playlists.scores(seed_rows, seed_weights)
             match = (1 - collab) * sound + collab * (0.6 * song_cf + 0.4 * artist_cf)
+        if mood:
+            match = match + self.mood_bonus(mood)
         scores = (1 - popularity) * match + popularity * self.popularity
 
         # remove songs we shouldn't recommend
@@ -168,6 +175,17 @@ class Recommender:
                 reasons=self.explain(i, seed_rows, song_cf),
             ))
         return results
+
+    def mood_bonus(self, mood):
+        """Songs get a bonus/penalty depending on how well they fit the mood sliders.
+        e.g. energy = 1 means songs with above average energy get a bonus.
+        tanh keeps it between -1 and 1 so one extreme song can't take over"""
+        bonus = np.zeros(len(self.ids))
+        for feature, amount in mood.items():
+            if feature in MOOD_FEATURES and amount:
+                z = self.audio_z[:, AUDIO_FEATURES.index(feature)]
+                bonus += amount * z
+        return MOOD_STRENGTH * np.tanh(bonus / 2)
 
     def pick_diverse(self, candidates, scores, n, diversity, max_per_artist):
         """Maximal marginal relevance: each step pick the song with the best score

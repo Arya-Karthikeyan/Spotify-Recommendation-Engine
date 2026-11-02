@@ -97,6 +97,39 @@ label.check { display: flex; gap: 8px; align-items: center; margin-top: 10px; fo
   .card .buttons { grid-column: 2; flex-direction: row; flex-wrap: wrap; }
   .bars { grid-template-columns: repeat(2, 1fr); }
 }
+/* mood */
+#mood-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.preset { border: 1px solid var(--border); background: var(--panel); border-radius: 999px; padding: 3px 12px; cursor: pointer; font-size: 13px; }
+.preset.on { background: var(--accent); border-color: var(--accent); color: var(--panel); }
+.slider.mood input { accent-color: var(--accent); }
+
+/* taste profile card */
+.taste { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 20px; }
+.taste-top { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; align-items: baseline; margin-bottom: 12px; }
+.taste h2 { margin: 0; font-size: 20px; }
+.taste .summary { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); align-items: center; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.dumbbells { display: grid; gap: 10px; }
+.db-row { display: grid; grid-template-columns: 110px 1fr; gap: 12px; align-items: center; }
+.db-row .name { font-size: 13px; }
+.db-row .name small { display: block; color: var(--muted); font-size: 11px; }
+.track { position: relative; height: 22px; }
+.track::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--border); }
+.track .gap { position: absolute; top: calc(50% - 1px); height: 2px; background: var(--accent); opacity: .45; }
+.dot { position: absolute; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; cursor: default; }
+.dot.you { background: var(--panel); border: 2px solid var(--accent); }
+.dot.recs { background: var(--accent); box-shadow: 0 0 0 2px var(--panel); }
+.dot:hover { transform: scale(1.3); }
+.track .ends { position: absolute; left: 0; right: 0; top: 100%; display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); line-height: 1; }
+#tip { position: fixed; pointer-events: none; background: var(--text); color: var(--bg); font-size: 12px; padding: 4px 8px; border-radius: 6px; display: none; z-index: 10; }
+.taste details { margin-top: 18px; font-size: 13px; }
+.taste summary { cursor: pointer; color: var(--muted); }
+.taste table { border-collapse: collapse; margin-top: 8px; font-variant-numeric: tabular-nums; }
+.taste td, .taste th { padding: 3px 12px 3px 0; text-align: left; }
+.taste th { color: var(--muted); font-weight: 500; }
+@media (max-width: 520px) { .db-row { grid-template-columns: 1fr; gap: 2px; } }
+
 .message { color: var(--muted); padding: 24px; text-align: center; border: 1px dashed var(--border); border-radius: 10px; }
 #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; display: none; }
 </style>
@@ -124,6 +157,10 @@ label.check { display: flex; gap: 8px; align-items: center; margin-top: 10px; fo
         <h3>Avoiding</h3>
         <div class="chips" id="dislikes"></div>
       </div>
+
+      <h3>Mood</h3>
+      <div id="mood-presets"></div>
+      <div id="mood-sliders"></div>
 
       <details id="settings" open>
         <summary><h3 style="display:inline">Settings</h3></summary>
@@ -155,6 +192,7 @@ label.check { display: flex; gap: 8px; align-items: center; margin-top: 10px; fo
     </div>
 
     <div>
+      <div class="taste" id="taste" style="display:none"></div>
       <div class="results-header">
         <h2 id="results-title">Recommendations</h2>
         <div>
@@ -167,6 +205,7 @@ label.check { display: flex; gap: 8px; align-items: center; margin-top: 10px; fo
   </div>
 </div>
 <div id="toast"></div>
+<div id="tip"></div>
 
 <script>
 const GENRES = ["edm", "latin", "pop", "r&b", "rap", "rock"];
@@ -337,6 +376,7 @@ async function getRecommendations() {
   if (!seeds.length) {
     results = [];
     $("results").innerHTML = `<div class="message">Search for a song you like to get started.</div>`;
+    drawTaste(null);
     return;
   }
   const thisRequest = ++requestCount;
@@ -354,12 +394,14 @@ async function getRecommendations() {
         popularity: Number($("popularity").value),
         new_artists: $("new-artists").checked,
         genres: selectedGenres,
+        mood: getMood(),
       }),
     });
     if (!res.ok) throw new Error("server returned " + res.status);
     const data = await res.json();
     if (thisRequest !== requestCount) return;  // a newer request already started
-    results = data;
+    results = data.songs;
+    drawTaste(data.taste);
     drawResults();
   } catch (err) {
     $("results").innerHTML = `<div class="message">Something went wrong: ${escapeHtml(err.message)}</div>`;
@@ -408,6 +450,141 @@ $("copy").addEventListener("click", async () => {
   } catch (e) {
     showToast("Couldn't copy, your browser blocked it");
   }
+});
+
+// ---- mood ----
+
+const MOODS = [
+  {id: "energy", name: "Energy", low: "calmer", high: "more energetic"},
+  {id: "valence", name: "Happiness", low: "sadder", high: "happier"},
+  {id: "danceability", name: "Danceability", low: "less", high: "more"},
+  {id: "acousticness", name: "Acoustic", low: "more electric", high: "more acoustic"},
+  {id: "tempo", name: "Tempo", low: "slower", high: "faster"},
+];
+
+const PRESETS = {
+  "Any": {},
+  "Gym": {energy: 1, tempo: 0.6, danceability: 0.4},
+  "Study": {energy: -0.8, acousticness: 0.6, tempo: -0.4},
+  "Party": {danceability: 1, valence: 0.7, energy: 0.5},
+  "Feel good": {valence: 1, danceability: 0.4},
+  "Late night": {energy: -0.6, valence: -0.5, acousticness: 0.3},
+};
+
+$("mood-sliders").innerHTML = MOODS.map(m => `
+  <div class="slider mood">
+    <label for="mood-${m.id}">${m.name}</label><span id="mood-${m.id}-val"></span>
+    <input id="mood-${m.id}" type="range" min="-1" max="1" step="0.1" value="0">
+    <small><span>${m.low}</span><span>${m.high}</span></small>
+  </div>`).join("");
+
+$("mood-presets").innerHTML = Object.keys(PRESETS).map(name =>
+  `<button class="preset ${name === "Any" ? "on" : ""}" data-preset="${name}">${name}</button>`).join("");
+
+function showMoodValue(id) {
+  const v = Number($("mood-" + id).value);
+  $("mood-" + id + "-val").textContent = v === 0 ? "0" : (v > 0 ? "+" : "") + Math.round(v * 100) + "%";
+}
+
+function getMood() {
+  const mood = {};
+  for (const m of MOODS) {
+    const v = Number($("mood-" + m.id).value);
+    if (v !== 0) mood[m.id] = v;
+  }
+  return mood;
+}
+
+function highlightPreset(name) {
+  document.querySelectorAll(".preset").forEach(b => b.classList.toggle("on", b.dataset.preset === name));
+}
+
+$("mood-presets").addEventListener("click", e => {
+  const btn = e.target.closest("[data-preset]");
+  if (!btn) return;
+  const preset = PRESETS[btn.dataset.preset];
+  for (const m of MOODS) {
+    $("mood-" + m.id).value = preset[m.id] || 0;
+    showMoodValue(m.id);
+  }
+  highlightPreset(btn.dataset.preset);
+  getRecommendations();
+});
+
+for (const m of MOODS) {
+  showMoodValue(m.id);
+  $("mood-" + m.id).addEventListener("input", () => { showMoodValue(m.id); highlightPreset(null); });
+  $("mood-" + m.id).addEventListener("change", getRecommendations);
+}
+
+// ---- taste profile ----
+
+const TASTE_ROWS = [
+  {key: "energy", name: "Energy", low: "calm", high: "intense"},
+  {key: "danceability", name: "Danceability", low: "low", high: "high"},
+  {key: "valence", name: "Mood", low: "sad", high: "happy"},
+  {key: "acousticness", name: "Acoustic", low: "electric", high: "acoustic"},
+  {key: "tempo", name: "Tempo", low: "60 BPM", high: "180 BPM"},
+  {key: "popularity", name: "Popularity", low: "obscure", high: "hit"},
+];
+
+function pct(v) { return Math.round(v * 100); }
+
+function drawTaste(taste) {
+  const box = $("taste");
+  if (!taste) { box.style.display = "none"; return; }
+  const you = taste.seeds, recs = taste.recs;
+  const era = taste.years[0] === taste.years[1] ? String(taste.years[0]) : taste.decade_share >= 0.5 ? "mostly " + taste.decade : taste.years.join(" - ");
+  const genres = taste.genres.length ? taste.genres.join(", ") : "mixed genres";
+
+  const rows = TASTE_ROWS.map(r => {
+    const a = pct(you[r.key]), b = pct(recs[r.key]);
+    const youText = r.key === "tempo" ? you.bpm + " BPM" : a + "%";
+    const recText = r.key === "tempo" ? recs.bpm + " BPM" : b + "%";
+    return `
+      <div class="db-row">
+        <div class="name">${r.name}</div>
+        <div class="track">
+          <div class="gap" style="left:${Math.min(a, b)}%; width:${Math.abs(a - b)}%"></div>
+          <div class="dot you" style="left:${a}%" data-tip="Your songs: ${youText}"></div>
+          <div class="dot recs" style="left:${b}%" data-tip="Recommendations: ${recText}"></div>
+          <div class="ends"><span>${r.low}</span><span>${r.high}</span></div>
+        </div>
+      </div>`;
+  }).join("");
+
+  const tableRows = TASTE_ROWS.map(r => {
+    const f = t => r.key === "tempo" ? t.bpm + " BPM" : pct(t[r.key]) + "%";
+    return `<tr><td>${r.name}</td><td>${f(you)}</td><td>${f(recs)}</td></tr>`;
+  }).join("");
+
+  box.innerHTML = `
+    <div class="taste-top">
+      <div>
+        <h2>Your taste</h2>
+        <p class="summary">${escapeHtml(genres)} · ${era} · around ${you.bpm} BPM</p>
+      </div>
+      <div class="legend">
+        <span><span class="dot you" style="position:static;margin:0"></span>Your songs</span>
+        <span><span class="dot recs" style="position:static;margin:0"></span>Recommendations</span>
+      </div>
+    </div>
+    <div class="dumbbells">${rows}</div>
+    <details><summary>Show numbers</summary>
+      <table><tr><th></th><th>Your songs</th><th>Recommendations</th></tr>${tableRows}</table>
+    </details>`;
+  box.style.display = "block";
+}
+
+// small tooltip for the dots
+document.addEventListener("mouseover", e => {
+  const dot = e.target.closest("[data-tip]");
+  $("tip").style.display = dot ? "block" : "none";
+  if (dot) $("tip").textContent = dot.dataset.tip;
+});
+document.addEventListener("mousemove", e => {
+  $("tip").style.left = e.clientX + 12 + "px";
+  $("tip").style.top = e.clientY + 12 + "px";
 });
 
 // ---- spotify account ----

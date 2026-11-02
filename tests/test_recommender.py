@@ -110,3 +110,13 @@ def test_match_spotify_tracks(rec):
     found, missing = match_to_dataset(rec, tracks)
     assert found == ["r3", "c2"]
     assert missing[0]["name"] == "Not Here"
+
+
+def test_mood_bonus(rec):
+    # seeds are one rock song and one chill song, so the mood sliders should decide
+    # which kind comes first
+    kw = dict(n=1, collab=0, popularity=0)
+    calm = rec.recommend(["r1", "c1"], mood={"energy": -1, "acousticness": 1}, **kw)
+    loud = rec.recommend(["r1", "c1"], mood={"energy": 1, "acousticness": -1}, **kw)
+    assert calm[0].track_id == "c2"
+    assert loud[0].track_id in {"r2", "r3"}
