@@ -1,0 +1,18 @@
+# Render deploy config (https://render.com)
+# New > Blueprint > pick this repo, and it sets everything up from this file
+services:
+  - type: web
+    name: crate-digger
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn recommender.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.1"
+      # these are secret so render asks for them when you create the service
+      - key: SPOTIPY_CLIENT_ID
+        sync: false
+      - key: SPOTIPY_CLIENT_SECRET
+        sync: false

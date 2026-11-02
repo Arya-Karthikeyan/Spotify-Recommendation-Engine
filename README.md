@@ -54,6 +54,16 @@ If you just take the top 20 you often get 20 really similar songs, sometimes all
 the same artist. So I used Maximal Marginal Relevance (MMR) to re-rank: each pick is
 penalised by how similar it is to songs already picked, and there's a limit per artist.
 
+**7. Mood**
+The mood sliders (energy, happiness, danceability, acoustic, tempo) go from -1 to 1. Each
+song gets a bonus based on how far above/below average it is on those features:
+```
+mood_bonus = 0.45 * tanh(sum(slider * feature_zscore) / 2)
+```
+tanh keeps it between -0.45 and 0.45 so it nudges the results rather than replacing them.
+I tried 0.3 (too subtle, "calmer" only dropped energy from 0.85 to 0.73) and 0.6 (started
+recommending stuff that didn't sound like your songs at all).
+
 ## Setup
 
 ```bash
@@ -74,6 +84,12 @@ Then go to http://127.0.0.1:8000
 Search for songs and add them, then use "More like this" / "Not for me" on the results
 to tweak them. "Copy Spotify links" copies all the links which you can paste straight
 into a Spotify playlist.
+
+- **Mood**: presets (Gym, Study, Party, Feel good, Late night) or sliders to shift the
+  results, e.g. Study = calmer + more acoustic + slower
+- **Your taste**: a chart comparing your songs with the recommendations (energy,
+  danceability, mood, acoustic, tempo, popularity) plus your main genres and decade.
+  It's handy for seeing what the mood sliders actually change
 
 If you set up Spotify keys (see below) there's also a **Connect Spotify** button. Once
 you log in you can load your top songs (last 4 weeks / 6 months / all time), recently
@@ -147,6 +163,21 @@ Adding the playlist data makes it about 35% better than just using sound + genre
 Going above 0.4 makes it worse, I think because most songs are in so few playlists
 that the co-occurrence scores get noisy.
 
+## Deploying it online (Render)
+
+The repo has a `render.yaml` so it can be deployed on [Render](https://render.com)'s free plan:
+
+1. Sign in to Render with GitHub, then **New > Blueprint** and pick this repo
+2. It asks for `SPOTIPY_CLIENT_ID` and `SPOTIPY_CLIENT_SECRET`, paste them in and deploy
+3. Once it's live, add `https://<your-app>.onrender.com/callback` as a redirect URI in the
+   Spotify dashboard
+
+The app works out its own redirect URI from Render's `RENDER_EXTERNAL_URL` variable.
+On the free plan the site goes to sleep after 15 minutes without visitors, so the first
+load after that takes about a minute. Also while the Spotify app is in development mode
+only people added under User Management can use Connect Spotify (everything else works
+for anyone).
+
 ## Tests
 
 ```bash
@@ -171,6 +202,7 @@ recommender/
   cli.py           command line tool
   app.py           FastAPI backend for the web app
   static/index.html
+render.yaml        deploy config for render
 scripts/
   evaluate.py
   download_data.py
