@@ -74,6 +74,13 @@ label.check { display: flex; gap: 8px; align-items: center; margin-top: 10px; fo
 .btn { border: 1px solid var(--border); background: var(--panel); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px; text-decoration: none; text-align: center; }
 .btn:hover { border-color: var(--accent); }
 .btn.red { color: var(--red); }
+.btn.spotify { display: block; width: 100%; padding: 9px; background: #1db954; border-color: #1db954; color: #0b0b0b; font-weight: 600; }
+.btn.spotify:hover { background: #1ed760; }
+.btn:disabled { opacity: .5; cursor: default; }
+#spotify-section { padding-bottom: 16px; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
+#spotify-section p { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+#spotify-section select { width: 100%; padding: 7px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: 14px; margin-bottom: 8px; }
+#spotify-section p a { color: var(--accent); }
 
 .card { display: grid; grid-template-columns: 32px 1fr auto; gap: 14px; padding: 14px 16px; margin-bottom: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
 .card .num { font-family: "IBM Plex Mono", monospace; color: var(--muted); font-size: 13px; }
@@ -102,6 +109,10 @@ label.check { display: flex; gap: 8px; align-items: center; margin-top: 10px; fo
 
   <div class="layout">
     <div class="sidebar">
+      <div id="spotify-section">
+        <!-- filled in by drawSpotify() depending on whether you're logged in -->
+      </div>
+
       <h3>Songs you like</h3>
       <div class="search">
         <input id="search" type="search" placeholder="Search a song or &quot;title - artist&quot;" autocomplete="off">
@@ -146,7 +157,10 @@ label.check { display: flex; gap: 8px; align-items: center; margin-top: 10px; fo
     <div>
       <div class="results-header">
         <h2 id="results-title">Recommendations</h2>
-        <button class="btn" id="copy">Copy Spotify links</button>
+        <div>
+          <button class="btn" id="save" style="display:none">Save to Spotify</button>
+          <button class="btn" id="copy">Copy Spotify links</button>
+        </div>
       </div>
       <div id="results"><div class="message">Loading...</div></div>
     </div>
@@ -396,18 +410,109 @@ $("copy").addEventListener("click", async () => {
   }
 });
 
+// ---- spotify account ----
+
+let spotify = {configured: false, connected: false, name: null};
+
+function drawSpotify() {
+  const box = $("spotify-section");
+  if (!spotify.configured) {
+    box.innerHTML = `<button class="btn spotify" disabled>Connect Spotify</button>
+      <p style="margin-top:8px">To use this, set SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET and restart the server (see the README).</p>`;
+  } else if (!spotify.connected) {
+    box.innerHTML = `<a class="btn spotify" href="/login">Connect Spotify</a>
+      <p style="margin-top:8px">Use your top songs as the starting point and save results as a playlist.</p>`;
+  } else {
+    box.innerHTML = `
+      <p>Connected as <b>${escapeHtml(spotify.name)}</b> · <a href="/logout">log out</a></p>
+      <select id="spotify-source">
+        <option value="top:short_term">My top songs (last 4 weeks)</option>
+        <option value="top:medium_term">My top songs (last 6 months)</option>
+        <option value="top:long_term">My top songs (all time)</option>
+        <option value="recent:">Recently played</option>
+        <option value="saved:">Liked songs</option>
+      </select>
+      <button class="btn" id="use-spotify" style="width:100%">Use my songs</button>`;
+    $("use-spotify").addEventListener("click", useSpotifySongs);
+  }
+  $("save").style.display = spotify.connected ? "inline-block" : "none";
+}
+
+async function useSpotifySongs() {
+  const [source, timeRange] = $("spotify-source").value.split(":");
+  const btn = $("use-spotify");
+  btn.disabled = true;
+  btn.textContent = "Loading...";
+  try {
+    const res = await fetch(`/api/spotify/songs?source=${source}&time_range=${timeRange || "short_term"}`);
+    if (!res.ok) throw new Error("server returned " + res.status);
+    const data = await res.json();
+    if (!data.songs.length) {
+      showToast("None of those songs are in the dataset (it stops at Jan 2020), try another option");
+    } else {
+      seeds = data.songs;
+      usingExample = false;
+      update();
+      showToast(`Found ${data.songs.length} of your ${data.total} songs in the dataset`);
+    }
+  } catch (err) {
+    showToast("Couldn't load your songs: " + err.message);
+  }
+  btn.disabled = false;
+  btn.textContent = "Use my songs";
+}
+
+$("save").addEventListener("click", async () => {
+  if (!results.length) return;
+  const name = prompt("Playlist name", "Crate Digger mix");
+  if (name === null) return;
+  $("save").disabled = true;
+  try {
+    const res = await fetch("/api/spotify/save", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({name, track_ids: results.map(s => s.id)}),
+    });
+    if (!res.ok) throw new Error("server returned " + res.status);
+    const data = await res.json();
+    showToast("Saved! Opening it in Spotify...");
+    window.open(data.url, "_blank");
+  } catch (err) {
+    showToast("Couldn't save the playlist: " + err.message);
+  }
+  $("save").disabled = false;
+});
+
+async function loadSpotifyStatus() {
+  try {
+    spotify = await fetch("/api/me").then(r => r.json());
+  } catch (e) {}
+  drawSpotify();
+
+  // spotify sends you back to /?spotify=connected or /?spotify=failed after logging in
+  const status = new URLSearchParams(location.search).get("spotify");
+  if (status === "connected") showToast("Connected to Spotify");
+  if (status === "failed") showToast("Spotify login didn't work, try again");
+  if (status) history.replaceState(null, "", "/");
+}
+
 // ---- start ----
 
 async function start() {
   // hide the settings by default on phones so you can see the results
   if (window.innerWidth <= 820) $("settings").open = false;
+  loadSpotifyStatus();
 
   if (!loadSeeds()) {
-    usingExample = true;
+    const examples = [];
     for (const q of EXAMPLE_SEEDS) {
       const found = await fetch("/api/search?q=" + encodeURIComponent(q)).then(r => r.json());
-      if (found.length) seeds.push(found[0]);
+      if (found.length) examples.push(found[0]);
     }
+    // only use the examples if you haven't picked anything while they were loading
+    if (seeds.length) return;
+    seeds = examples;
+    usingExample = true;
   }
   drawChips();
   getRecommendations();

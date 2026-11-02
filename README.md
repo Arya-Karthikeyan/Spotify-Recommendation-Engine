@@ -75,6 +75,11 @@ Search for songs and add them, then use "More like this" / "Not for me" on the r
 to tweak them. "Copy Spotify links" copies all the links which you can paste straight
 into a Spotify playlist.
 
+If you set up Spotify keys (see below) there's also a **Connect Spotify** button. Once
+you log in you can load your top songs (last 4 weeks / 6 months / all time), recently
+played or liked songs as the starting point, and **Save to Spotify** creates a private
+playlist with the results.
+
 ### Command line
 
 ```bash
@@ -96,14 +101,21 @@ Options:
 
 ### With your Spotify account
 
-1. Make an app at https://developer.spotify.com/dashboard with the redirect URI `http://127.0.0.1:8888/callback`
+1. Make an app at https://developer.spotify.com/dashboard and add these redirect URIs:
+   - `http://127.0.0.1:8000/callback` (web app)
+   - `http://127.0.0.1:8888/callback` (command line)
+
+   Spotify doesn't allow `localhost` any more so it has to be `127.0.0.1`, and you have
+   to open the web app at http://127.0.0.1:8000 too, otherwise the login cookie won't match.
+   While the app is in development mode you also have to add your Spotify account under
+   "User Management" in the dashboard.
 2. Set your keys:
    ```bash
    export SPOTIPY_CLIENT_ID=your_id
    export SPOTIPY_CLIENT_SECRET=your_secret
    export SPOTIPY_REDIRECT_URI=http://127.0.0.1:8888/callback
    ```
-3. Run:
+3. Restart the web app and click Connect Spotify, or use the command line:
    ```bash
    python -m recommender spotify --source top --time-range short_term
    python -m recommender spotify --source playlist --playlist <link> --save "More like this"
@@ -143,7 +155,7 @@ python -m pytest
 
 ## Things I'd like to add
 
-- A "connect Spotify" button in the web app instead of only the CLI
+- Store logins somewhere other than memory (at the moment restarting the server logs everyone out)
 - A newer/bigger dataset (this one stops at 2020 and only has 6 genres)
 - Learning the feature weights instead of picking them by hand
 - Matrix factorisation (ALS) instead of plain co-occurrence

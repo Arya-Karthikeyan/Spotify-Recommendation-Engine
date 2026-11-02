@@ -5,7 +5,9 @@
 # in Nov 2024 so the actual recommending is all done locally.
 #
 # You need to make an app at https://developer.spotify.com/dashboard and set:
-#   SPOTIPY_CLIENT_ID, SPOTIPY_CLIENT_SECRET, SPOTIPY_REDIRECT_URI
+#   SPOTIPY_CLIENT_ID, SPOTIPY_CLIENT_SECRET, SPOTIPY_REDIRECT_URI (redirect uri is only for the cli)
+
+import os
 
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
@@ -14,7 +16,14 @@ SCOPES = "user-top-read user-read-recently-played user-library-read playlist-mod
 
 
 def connect():
+    """For the command line. Logs in through the terminal and caches the token in .cache"""
     return spotipy.Spotify(auth_manager=SpotifyOAuth(scope=SCOPES, open_browser=False))
+
+
+def make_auth(redirect_uri, cache_handler):
+    """For the web app. Each browser session gets its own token cache."""
+    return SpotifyOAuth(scope=SCOPES, redirect_uri=redirect_uri, cache_handler=cache_handler,
+                        open_browser=False, show_dialog=True)
 
 
 def simplify(track):
@@ -47,6 +56,10 @@ def match_to_dataset(rec, tracks):
         elif tid not in found:
             found.append(tid)
     return found, missing
+
+
+def is_configured():
+    return bool(os.environ.get("SPOTIPY_CLIENT_ID") and os.environ.get("SPOTIPY_CLIENT_SECRET"))
 
 
 def save_playlist(sp, name, track_ids):
